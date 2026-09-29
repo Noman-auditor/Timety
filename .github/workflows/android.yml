@@ -3,8 +3,6 @@ name: Android CI (Build APK)
 on:
   push:
     branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
@@ -21,19 +19,15 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: ${{ runner.os }}-gradle-
+      # ✅ Android SDK install + licenses accept (সবচেয়ে জরুরি)
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
+      # ✅ gradlew executable
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      # ---------- Debug APK (সবসময় বিল্ড হবে) ----------
+      # ✅ Debug APK — কোনো keystore/secret ছাড়াও এটি অবশ্যই বিল্ড হবে
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
 
@@ -43,13 +37,22 @@ jobs:
           name: app-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
 
-      # ---------- Release APK (main branch-এ push হলে + Secrets থাকলে) ----------
+      # ---------- Release (Secrets থাকলে only) ----------
+      - name: Check signing secrets
+        id: check_secrets
+        run: |
+          if [ -n "${{ secrets.SIGNING_KEY }}" ]; then
+            echo "has_secrets=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_secrets=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Decode Keystore
-        if: github.ref == 'refs/heads/main'
+        if: steps.check_secrets.outputs.has_secrets == 'true'
         run: echo "${{ secrets.SIGNING_KEY }}" | base64 -d > app/keystore.jks
 
       - name: Build Release APK
-        if: github.ref == 'refs/heads/main'
+        if: steps.check_secrets.outputs.has_secrets == 'true'
         run: ./gradlew assembleRelease --stacktrace
         env:
           SIGNING_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
@@ -57,7 +60,7 @@ jobs:
           SIGNING_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
       - name: Upload Release APK
-        if: github.ref == 'refs/heads/main'
+        if: steps.check_secrets.outputs.has_secrets == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: app-release-apk
